@@ -1,116 +1,252 @@
-# AWS 3-Tier Infrastructure with Terraform
+#### AWS 3-Tier Infrastructure with Terraform
 
-Production-style web stack on AWS, built entirely from code. One command creates
-the network, load balancer, auto-scaling web servers and a private database, with
-**identical dev and prod environments** (only sizes differ).
+ 
 
-## What it does
+Production-style, multi-AZ 3-tier web architecture on AWS provisioned entirely with modular Terraform. A single deployment creates an isolated VPC network, an internet-facing Application Load Balancer (ALB), a self-healing EC2 Auto Scaling Group (ASG), and an encrypted private RDS MySQL database—with identical **dev** and **prod** codebases separated only by configuration variables. 
 
-```
-                    Internet
-                       |
-                +--------------+       PUBLIC subnets (2 AZs)
-                |     ALB      |  <--  SG: 80 from internet
-                +--------------+
-                       |
-        +--------------+--------------+  PRIVATE app subnets (2 AZs)
-        |  EC2 (ASG)        EC2 (ASG) |  SG: 80 only from ALB SG
-        +--------------+--------------+  self-heal + scale on CPU, SSM access
-                       |
-                +--------------+       PRIVATE db subnets (no internet route)
-                |  RDS MySQL   |  <--  SG: 3306 only from app SG
-                +--------------+       password in Secrets Manager
-```
+#### Architecture & Security Design
 
-| Tier | What | Security |
-|------|------|----------|
-| 1 - Web entry | Application Load Balancer | Only port 80 from the internet |
-| 2 - App | EC2 Auto Scaling Group (nginx) | Private subnets, chained SG, **SSM instead of SSH**, **IMDSv2**, encrypted EBS |
-| 3 - Data | RDS MySQL 8 | Private + isolated subnets, encrypted, **Secrets Manager** credentials |
+                          Internet
+                             |
+                   +-------------------+       PUBLIC Subnets (2 AZs)
 
-## Tech used
-Terraform (modules, remote state, multi-environment), AWS VPC / ALB / Auto Scaling /
-EC2 / RDS / S3 / DynamoDB / IAM / SSM / Secrets Manager, GitHub Actions.
+                   |        ALB        |  <--  ALB SG: Port 80 from 0.0.0.0/0
+                   +-------------------+
+                             |
+            +----------------+----------------+  PRIVATE App Subnets (2 AZs)
 
-## Project structure
-```
-bootstrap/            one-time S3 bucket + DynamoDB lock table (remote state)
-modules/vpc           VPC, 3 subnet tiers, NAT, route tables
-modules/alb           load balancer, target group, listener, ALB security group
-modules/asg           launch template, ASG, scaling policy, IAM role, app security group
-modules/rds           MySQL, DB security group, Secrets Manager access policy
-environments/dev      small/cheap config  (terraform.tfvars + backend.hcl)
-environments/prod     HA config           (terraform.tfvars + backend.hcl)
-.github/workflows     CI: terraform fmt + validate on every pull request
-```
+            |  EC2 (ASG)           EC2 (ASG)  |  App SG: Port 80 ONLY from ALB SG
+            +----------------+----------------+  Auto-healing, CPU scaling, SSM access
+                             |
+                   +-------------------+       PRIVATE DB Subnets (No Internet Route)
 
-## Prerequisites
-- An AWS account + an IAM user/role with admin-like access (for learning)
-- [Terraform >= 1.5](https://developer.hashicorp.com/terraform/install)
-- [AWS CLI v2](https://aws.amazon.com/cli/) configured: `aws configure`
-- (Optional) Session Manager plugin, to open a shell on instances
+                   |    RDS MySQL 8    |  <--  DB SG: Port 3306 ONLY from App SG
+                   +-------------------+       Credentials auto-stored in Secrets Manager
 
-## How to run (Windows CMD; same commands work in Linux/macOS)
+#### Layer-by-Layer Breakdown
 
-### 1. Create the remote state backend (one time)
-```bat
+Tier / ComponentAWS Services UsedSecurity & Reliability Controls
+****Network Layer****
+VPC (10.10.0.0/16), 6 Subnets across 2 AZs (ap-south-1a, ap-south-1b), IGW, NAT GatewayStrict 3-tier subnet segmentation; private subnets route outbound traffic via NAT Gateway with zero inbound internet exposure.
+****Tier 1: Web Entry****
+Application Load Balancer (ALB), Target Group, HTTP ListenerPublicly accessible only on HTTP port 80; drop_invalid_header_fields = true enabled to prevent HTTP request smuggling.
+****Tier 2: App Compute****
+EC2 Launch Template, Auto Scaling Group (Nginx), IAM Instance ProfileDeployed in private subnets; Security Group accepts traffic **only** from ALB SG; **IMDSv2 enforced**; encrypted EBS volumes; **AWS SSM** replaces SSH (no port 22 or .pem keys needed).
+****Tier 3: Database****
+Amazon RDS (MySQL 8), DB Subnet Group, AWS Secrets ManagerIsolated in private DB subnets with no internet route; storage encrypted at rest; SG allows port 3306 **only** from App SG; DB password auto-generated in Secrets Manager.
+****State & CI/CD****
+Amazon S3, DynamoDB, GitHub ActionsVersioned, AES-256 encrypted S3 remote state with DynamoDB state locking (terraform-locks); automated terraform fmt and terraform validate checks on PRs.
+
+#### Repository Structure
+
+text
+
+aws-3tier-terraform/
+├── bootstrap/                  # One-time S3 state bucket + DynamoDB lock table
+│   └── main.tf
+├── modules/
+│   ├── vpc/                    # VPC, public/app/db subnets, IGW, NAT Gateway, route tables
+│   ├── alb/                    # Internet-facing ALB, target group (/health), listener, ALB SG
+│   ├── asg/                    # Launch template, user_data.sh.tpl, ASG, CPU scaling, SSM IAM role
+│   └── rds/                    # RDS MySQL 8 instance, subnet group, DB SG, Secrets Manager secret
+├── environments/
+│   ├── dev/                    # Cost-optimized lab config (t3.micro, single NAT, single-AZ RDS)
+│   │   ├── backend.hcl
+│   │   ├── main.tf
+│   │   ├── outputs.tf
+│   │   └── terraform.tfvars
+│   └── prod/                   # High-availability config (Multi-AZ RDS, deletion protection, 2 NATs)
+│       ├── backend.hcl
+│       ├── main.tf
+│       ├── outputs.tf
+│       └── terraform.tfvars
+└── .github/workflows/
+    └── terraform-ci.yml        # Automated CI checks (fmt + validate) across dev and prod
+
+Use code with caution.
+
+Copy code text to clipboard.
+
+#### Step-by-Step Prerequisites (Zero-to-Ready Setup)
+
+#### Step 1: Create a Dedicated IAM User in AWS (Do This First)
+
+Never use your AWS root account or reuse keys from unrelated projects. Create an isolated IAM deployer user before running Terraform: 
+
+1. Log in to the **AWS Console** → search for **IAM** → go to **Users** → click **Create user**.
+2. **User name:** Enter terraform-3tier-deployer (leave console access unchecked) → click **Next**.
+3. **Permissions:** Select **Attach policies directly** → search and check **AdministratorAccess** *(for quick lab execution; delete this user after finishing the lab)* → click **Next** → **Create user**.
+4. **Generate Access Keys:** 
+
+  * Click on **terraform-3tier-deployer** in the Users list → open the **Security credentials** tab.
+  * Under **Access keys**, click **Create access key** → select **Command Line Interface (CLI)** → check the confirmation box → click **Next** → **Create access key**.
+  * Copy both the **Access key ID** and **Secret access key** (never commit or screenshot these keys).
+
+#### Step 2: Install Required CLI Tools (Ubuntu / WSL2)
+
+Run this block once in your WSL2 or Ubuntu terminal to install **AWS CLI v2**, **Terraform**, and **unzip**: 
+
+bash
+
+# 1. Install unzip, curl, and GPG utilities
+sudo apt update && sudo apt install -y unzip curl wget gpg
+
+# 2. Install AWS CLI v2
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip -q awscliv2.zip && sudo ./aws/install && rm -rf aws awscliv2.zip
+
+# 3. Install HashiCorp Terraform (>= 1.5.0)
+wget -O - https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+sudo apt update && sudo apt install -y terraform
+
+# 4. Verify versions
+terraform -version
+aws --version
+
+Use code with caution.
+
+Copy code text to clipboard.
+
+#### Step 3: Configure an Isolated AWS CLI Profile
+
+Store your new IAM keys under a dedicated profile named 3tier: 
+
+bash
+
+aws configure --profile 3tier
+# Enter:
+#   AWS Access Key ID:     <your new key ID>
+#   AWS Secret Access Key: <your new secret key>
+#   Default region name:   ap-south-1
+#   Default output format: json
+
+# Activate the profile for your current terminal session and verify
+export AWS_PROFILE=3tier
+aws sts get-caller-identity
+
+Use code with caution.
+
+Copy code text to clipboard.
+
+**Important:** Every time you open a **new** terminal window, run export AWS_PROFILE=3tier before running Terraform or AWS CLI commands. 
+
+#### Complete Runbook: Build, Test, Destroy & Re-Run
+
+#### Phase 1: Create the Remote State S3 Bucket & Lock Table (bootstrap/)
+
+Terraform needs an S3 bucket to store terraform.tfstate and a DynamoDB table (terraform-locks) to prevent concurrent state corruption. 
+
+**S3 Naming Rule:** S3 bucket names must be **globally unique across all AWS accounts**, lowercase, and contain no underscores (e.g., kashyap-3tier-tfstate-202611). 
+
+bash
+
+export AWS_PROFILE=3tier
+export BUCKET_NAME="your-unique-3tier-tfstate-2026"
+
 cd bootstrap
 terraform init
-terraform apply -var="state_bucket_name=YOUR-UNIQUE-BUCKET-NAME"
+terraform apply -var="state_bucket_name=$BUCKET_NAME" -auto-approve
 cd ..
-```
 
-### 2. Point the environment at that bucket
-Open `environments\dev\backend.hcl` and replace `REPLACE-WITH-YOUR-STATE-BUCKET`
-with the bucket name from step 1 (do the same for `prod` later).
+Use code with caution.
 
-### 3. Deploy dev
-```bat
-cd environments\dev
+Copy code text to clipboard.
+
+*(Creates 5 resources: S3 bucket, versioning, AES-256 encryption, public access block, and DynamoDB lock table.)* 
+
+#### Phase 2: Deploy the dev Environment (~10–12 Minutes)
+
+Connect environments/dev to your new S3 state bucket, validate syntax/formatting, and provision all **35 AWS resources**: 
+
+bash
+
+cd environments/dev
+
+# 1. Inject your S3 bucket name into backend.hcl
+sed -i "s/REPLACE-WITH-YOUR-STATE-BUCKET/$BUCKET_NAME/g" backend.hcl
+
+# 2. Initialize remote backend & run CI validation checks
 terraform init -backend-config=backend.hcl
+terraform fmt -check -recursive ../../
+terraform validate
+
+# 3. Preview and deploy the 3-tier stack
 terraform plan
-terraform apply
-```
-The full stack takes roughly 10-15 minutes (RDS and NAT gateway are the slow parts).
-Time it yourself and put the real number on your resume.
+terraform apply -auto-approve
 
-### 4. Test it
-`terraform apply` prints `app_url`. Open it in a browser and refresh a few times;
-you will see different **instance IDs / AZs** as the ALB balances traffic.
+Use code with caution.
 
-### 5. See self-healing and auto scaling
-```bat
-:: Self-healing: terminate one instance, the ASG launches a replacement
-aws ec2 terminate-instances --instance-ids i-xxxxxxxxxxxx --region ap-south-1
+Copy code text to clipboard.
 
-:: Open a shell WITHOUT SSH (SSM) and generate CPU load to trigger scale-out
-aws ssm start-session --target i-xxxxxxxxxxxx --region ap-south-1
-:: inside the shell:   yes > /dev/null &      (run it a few times)
-:: watch:  aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names three-tier-dev-asg
-```
+**Expected Wait Time:** Deployment takes **10–12 minutes** because Amazon RDS (db.t3.micro) and the NAT Gateway take ~8–10 minutes to provision. 
 
-### 6. Read the DB credentials (shows Secrets Manager integration)
-```bat
-terraform output db_secret_arn
-aws secretsmanager get-secret-value --secret-id <that-arn> --query SecretString --output text
-```
+#### Phase 3: Verify & Test Live Infrastructure
 
-### 7. Destroy everything (avoid charges!)
-```bat
-terraform destroy
-```
-Prod works the same way from `environments\prod` (deletion protection is on:
-set `db_deletion_protection = false` and apply before destroying).
+##### 1. Verify Application Load Balancer & Health Endpoint
 
-## CI/CD
-`.github/workflows/terraform-ci.yml` runs `terraform fmt -check` and
-`terraform validate` for dev and prod on every pull request. Run
-`terraform fmt -recursive` locally before pushing so the check passes.
+bash
 
-## Cost warning
-NAT Gateways, ALB and RDS are billed hourly (roughly a few USD per day for dev).
-Destroy the stack when you are done.
+ALB_URL=$(terraform output -raw app_url)
+echo "Live Application URL: $ALB_URL"
 
-## Ideas to extend
-HTTPS with ACM + Route 53, WAF on the ALB, RDS read replica, VPC endpoints for SSM
-(removes NAT dependency), remote-state per team, `terraform plan` comment on PRs.
+curl -i "$ALB_URL/"
+curl -i "$ALB_URL/health"
+
+Use code with caution.
+
+Copy code text to clipboard.
+
+Expected response on /: 
+
+html
+
+<h1>3-tier app (dev)</h1>
+<p>Served by instance <b>i-09f38880e6843a161</b> in <b>ap-south-1a</b></p>
+
+Use code with caution.
+
+Copy code text to clipboard.
+
+##### 2. Retrieve Auto-Generated DB Credentials from Secrets Manager
+
+bash
+
+SECRET_ARN=$(terraform output -raw db_secret_arn)
+aws secretsmanager get-secret-value --secret-id "$SECRET_ARN" --query SecretString --output text
+
+Use code with caution.
+
+Copy code text to clipboard.
+
+##### 3. Test Self-Healing & Auto Scaling (Optional)
+
+bash
+
+# Get the active EC2 Instance ID inside the Auto Scaling Group
+INSTANCE_ID=$(aws autoscaling describe-auto-scaling-groups \
+  --auto-scaling-group-names three-tier-dev-asg \
+  --query 'AutoScalingGroups.Instances.InstanceId' --output text)
+
+# Connect to the private EC2 instance via AWS SSM (no SSH key or port 22 needed)
+aws ssm start-session --target "$INSTANCE_ID" --region ap-south-1
+
+# Or terminate the instance and watch ASG automatically replace it within ~2 minutes
+aws ec2 terminate-instances --instance-ids "$INSTANCE_ID" --region ap-south-1
+
+Use code with caution.
+
+Copy code text to clipboard.
+
+#### Phase 4: Full Teardown (Prevent Ongoing AWS Charges!)
+
+**Cost Warning:** NAT Gateways, Application Load Balancers, EC2 instances, and RDS databases bill hourly. Destroy everything immediately after verifying your deployment. 
+
+##### 1. Destroy the dev Environment (35 Resources, ~6 Minutes)
+
+bash
+
+export AWS_PROFILE=3tier
+cd environments/dev
+terraform destroy -auto-approve
+
