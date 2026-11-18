@@ -1,0 +1,35 @@
+# Runs on every pull request: formatting check + validation of both environments.
+# No AWS credentials needed because we init with -backend=false (static checks only).
+name: terraform-ci
+
+on:
+  pull_request:
+    paths:
+      - "**.tf"
+      - "**.tfvars"
+      - ".github/workflows/terraform-ci.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: [dev, prod]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      # Fails the PR if code is not formatted (run `terraform fmt -recursive` locally to fix)
+      - name: terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: terraform init (no backend)
+        working-directory: environments/${{ matrix.env }}
+        run: terraform init -backend=false
+
+      - name: terraform validate
+        working-directory: environments/${{ matrix.env }}
+        run: terraform validate
