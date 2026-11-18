@@ -281,13 +281,18 @@ Go to **AWS Console** → **IAM** → **Users** → `terraform-3tier-deployer` �
 ## Live Proof of Execution
 
 ### 1. Live Application & Health Endpoint (HTTP 200 OK)
-> *Drag and drop Screenshot 1 (`curl` output showing `3-tier app (dev)` and `/health` returning `200 OK`) here.*
+
+<img width="1280" height="581" alt="1" src="https://github.com/user-attachments/assets/cb5912ed-e1b4-43e8-86cb-dc1db05a3836" />
 
 ### 2. Multi-AZ VPC Resource Map (Public, Private App & Private DB Subnets)
-> *Drag and drop Screenshot 2 (cropped VPC Resource Map showing 6 subnets, route tables, IGW, and NAT Gateway) here.*
+
+<img width="1280" height="717" alt="3" src="https://github.com/user-attachments/assets/149e22ca-823d-4232-a513-5d6fbd98bafc" />
+
 
 ### 3. EC2 Auto Scaling Group (1/1 Healthy at Desired Capacity)
-> *Drag and drop Screenshot 3 (cropped ASG console view showing `three-tier-dev-asg` healthy) here.*
+
+<img width="1277" height="714" alt="4" src="https://github.com/user-attachments/assets/f2653986-b2d2-462d-85e5-6aa3cb011d2b" />
+
 
 ### 4. Automated GitHub Actions CI (`terraform fmt` & `terraform validate`)
 > *Drag and drop Screenshot 4 (GitHub Actions green workflow run from the Actions tab) here.*
