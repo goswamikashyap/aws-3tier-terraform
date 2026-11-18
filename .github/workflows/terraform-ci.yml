@@ -1,13 +1,16 @@
-# Runs on every pull request: formatting check + validation of both environments.
+# Runs on every push to main & pull request: formatting check + validation of both environments.
 # No AWS credentials needed because we init with -backend=false (static checks only).
 name: terraform-ci
 
 on:
+  push:
+    branches: [main]
   pull_request:
     paths:
       - "**.tf"
       - "**.tfvars"
       - ".github/workflows/terraform-ci.yml"
+  workflow_dispatch:
 
 jobs:
   validate:
@@ -22,7 +25,7 @@ jobs:
         with:
           terraform_version: 1.9.8
 
-      # Fails the PR if code is not formatted (run `terraform fmt -recursive` locally to fix)
+      # Fails if code is not formatted (run `terraform fmt -recursive` locally to fix)
       - name: terraform fmt
         run: terraform fmt -check -recursive
 
