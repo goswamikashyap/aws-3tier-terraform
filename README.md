@@ -295,7 +295,9 @@ Go to **AWS Console** → **IAM** → **Users** → `terraform-3tier-deployer` �
 
 
 ### 4. Automated GitHub Actions CI (`terraform fmt` & `terraform validate`)
-> *Drag and drop Screenshot 4 (GitHub Actions green workflow run from the Actions tab) here.*
+
+<img width="1280" height="685" alt="image" src="https://github.com/user-attachments/assets/7f6d9673-9dcb-4405-aca1-68a1838d3c50" />
+
 
 ---
 
